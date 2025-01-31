@@ -45,7 +45,7 @@ function App() {
     const [categoriesResponse, subcategoriesResponse, questionsResponse] = await Promise.all([
       supabase.from('categories').select('*').order('timestamp', { ascending: false }),
       supabase.from('subcategories').select('*').order('timestamp', { ascending: false }),
-      supabase.from('questions').select('*').order('timestamp', { ascending: false })
+      supabase.from('questions').select('*').order('order', { ascending: false })
     ]);
 
     if (categoriesResponse.data) {
@@ -64,27 +64,14 @@ function App() {
     }
   }, [selectedParent.id]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const toggleCategoryExpansion = (categoryId: string) => {
-    setExpandedCategories(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(categoryId)) {
-        newSet.delete(categoryId);
-      } else {
-        newSet.add(categoryId);
-      }
-      return newSet;
-    });
+  const getNextOrder = (questions: Question[]) => {
+    const relevantQuestions = questions.filter(
+      q => q.parent_type === selectedParent.type && q.parent_id === selectedParent.id
+    );
+    if (relevantQuestions.length === 0) return 1;
+    const maxOrder = Math.max(...relevantQuestions.map(q => q.order || 0));
+    return maxOrder + 1;
   };
-
-  const handleParentChange = useCallback((type: 'category' | 'subcategory', id: string) => {
-    setIsTransitioning(true);
-    setSelectedParent({ type, id });
-    setTimeout(() => setIsTransitioning(false), 200);
-  }, []);
 
   const handleAddQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,6 +86,8 @@ function App() {
       return;
     }
 
+    const nextOrder = getNextOrder(questions);
+
     const { error } = await supabase
       .from('questions')
       .insert([{
@@ -106,7 +95,8 @@ function App() {
         parent_type: selectedParent.type,
         parent_id: selectedParent.id,
         category_id: categoryId,
-        completed: false
+        completed: false,
+        order: nextOrder
       }]);
 
     if (!error) {
@@ -130,15 +120,17 @@ function App() {
       return;
     }
 
+    const startOrder = getNextOrder(questions);
     const newQuestions = bulkQuestions
       .split('\n')
       .filter(q => q.trim())
-      .map(title => ({
+      .map((title, index) => ({
         title: title.trim(),
         parent_type: selectedParent.type,
         parent_id: selectedParent.id,
         category_id: categoryId,
-        completed: false
+        completed: false,
+        order: startOrder + index
       }));
 
     const { error } = await supabase.from('questions').insert(newQuestions);
@@ -151,6 +143,28 @@ function App() {
       console.error('Error bulk importing questions:', error);
     }
   };
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const toggleCategoryExpansion = (categoryId: string) => {
+    setExpandedCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(categoryId)) {
+        newSet.delete(categoryId);
+      } else {
+        newSet.add(categoryId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleParentChange = useCallback((type: 'category' | 'subcategory', id: string) => {
+    setIsTransitioning(true);
+    setSelectedParent({ type, id });
+    setTimeout(() => setIsTransitioning(false), 200);
+  }, []);
 
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -364,9 +378,9 @@ function App() {
   };
 
   const filteredQuestions = useMemo(() => 
-    questions.filter(q => 
-      q.parent_type === selectedParent.type && q.parent_id === selectedParent.id
-    ),
+    questions
+      .filter(q => q.parent_type === selectedParent.type && q.parent_id === selectedParent.id)
+      .sort((a, b) => (a.order || 0) - (b.order || 0)),
     [questions, selectedParent]
   );
 
@@ -722,7 +736,6 @@ function App() {
               <h3 className="text-lg font-semibold">Bulk Import Questions</h3>
               <button
                 onClick={() => setShowBulkImportForm(false)}
-                className="text-gray-500 hover:text-gray-700"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -741,7 +754,7 @@ function App() {
               </div>
               <button
                 type="submit"
-                             className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
+                className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
               >
                 Import Questions
               </button>
